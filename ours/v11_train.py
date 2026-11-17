@@ -29,8 +29,12 @@ TURN_MODEL_PATH = os.path.join(HERE, "models", "v11_turnover.joblib")
 # (idsse_bench.align_to_control, tau 2 s; validate_relabel.py). Same features, models, decoder.
 # v13 / v13r = v12 / v11 + a temporal GRU head over the same features (seq_model.py, validate_seq.py),
 # its probabilities averaged 50/50 with the boosted trees'. Same decoder.
-CONTROL_TAU = {"v11": 0.0, "v12": 2.0, "v13": 2.0, "v13r": 0.0}
-GRU_VERSIONS = {"v13", "v13r"}
+# v14 = v13r trained on each IDSSE match degraded twice: the legacy bench AND the atd_stop world,
+# whose ball gaps copy BAR-ATH's (long blocks, lost through stoppages; validate_world_train.py).
+CONTROL_TAU = {"v11": 0.0, "v12": 2.0, "v13": 2.0, "v13r": 0.0, "v14": 0.0}
+GRU_VERSIONS = {"v13", "v13r", "v14"}
+TRAIN_WORLDS = {"v14": ("legacy", "atd_stop")}               # default: ("legacy",)
+WORLD_CFG = {"legacy": dict(world="legacy"), "atd_stop": dict(world="blocks", affinity=1.0, align=0.8)}
 
 
 def model_paths(version="v11"):
@@ -51,10 +55,16 @@ def main():
     version = ap.parse_args().version
     tau = CONTROL_TAU[version]
     MODEL_PATH, TURN_MODEL_PATH = model_paths(version)
+    import idsse_bench as bench
     datas = []
-    for i, mid in enumerate(T.MATCHES):
+    for world, i, mid in [(w, i, m) for w in TRAIN_WORLDS.get(version, ("legacy",))
+                          for i, m in enumerate(T.MATCHES)]:
         t0 = time.time()
-        d = T.prepare(mid, i)
+        bench.set_world(**WORLD_CFG[world])
+        try:
+            d = T.prepare(mid, i)
+        finally:
+            bench.set_world("legacy")
         if tau:                                   # v12: touch-spells without control -> previous team
             import idsse_bench as bench
             d["gt"] = bench.align_to_control(d["gt"], tau)
@@ -68,8 +78,9 @@ def main():
         d["XTs"] = np.hstack([v8.turnover_features(v5.swap_features(d["X"], d["names"]), d["names"],
                                                    shape.swap_shape(S, sn), sn), d["E"]])
         d["turn"] = v8.turnover_labels(d["gt"]).astype(int)
+        d.pop("tracking", None)                   # not needed any more: keeps 14 datasets in memory
         datas.append(d)
-        print("features %s (%.0f s)" % (mid, time.time() - t0), flush=True)
+        print("features %s %s (%.0f s)" % (world, mid, time.time() - t0), flush=True)
     idx = list(range(len(datas)))
     d_tr = np.mean(np.concatenate([d["y"][d["graded"] & (d["y"] >= 0)] == 2 for d in datas]))
     os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)

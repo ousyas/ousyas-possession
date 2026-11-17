@@ -1,6 +1,6 @@
 # Ball possession from automatic tracking — technical document
 
-Team **Ousyas** — More than a Hack 2027, Phase 1 (BAR–ATH). Submitted file (`v13r`) SHA-256 `da9ff3292002ec089d80378e4f3eff7303ccd52a2d7d79448826b2a31fc46165`. Code: `ours/`. Reproduction: §7.
+Team **Ousyas** — More than a Hack 2027, Phase 1 (BAR–ATH). Submitted file (`v14`) SHA-256 `be4c695128e50ad1c65532c5b3faf4ffc03b2962d186a247b7043fb17e8bc792`. Code: `ours/`. Reproduction: §7.
 
 ## 1. Approach in one paragraph
 
@@ -9,7 +9,8 @@ an HMM/Viterbi decoder whose transition costs vary in time → minimum-duration 
 classifier and the detector are gradient-boosted trees (scikit-learn
 `HistGradientBoostingClassifier`); the classifier's probabilities are averaged 50/50 with those of
 a small **bidirectional GRU** that reads the same per-frame features over ~100 s of context
-(submission `v13r`). Everything is trained **only on 7 public Bundesliga matches (IDSSE, CC-BY)**
+(`v13r`), and the submission `v14` trains all three on the same matches degraded twice: once as
+before and once with ball gaps that copy BAR-ATH's (§4). Everything is trained **only on 7 public Bundesliga matches (IDSSE, CC-BY)**
 whose tracking we degrade to look like the challenge's automatic tracking data (ATD). Every
 design decision was taken on that external benchmark with leave-one-match-out validation; the
 public 5-minute window of the challenge game was used only to check that the pipeline runs end to
@@ -37,7 +38,7 @@ plausible events.
 | temporal head | `seq_model.py` | 2-layer bidirectional GRU (hidden 64, ~110 k parameters) over the same 61 per-frame features (43 frame + 18 event timing), robust-scaled, at 5 fps; trained on 512-step chunks (~100 s), one random 5 fps phase per half and epoch, H↔A swap augmentation, 10 epochs, Adam 2e-3, seed 0, single-threaded deterministic torch. At prediction, the five 5 fps phases are run over each half and interleaved. Its P(H, A, D) is averaged 50/50 with the classifier's (weight fixed in advance) before the alive-rate EM and the decoder |
 | clean-up | `v3.py` | minimum durations; outside the two graded halves → `X` |
 
-Submission = `v13r`: classifier `models/v13r.joblib` + detector `models/v13r_turnover.joblib` + GRU `models/v13r_gru.joblib` (`v11.py --version v13r`, `v11_train.py --version v13r`). The classifier and detector are the v11 ones (same labels, same training); `v13r` adds only the GRU. Our first submission was `v11` (`models/v11*.joblib`, `--version v11`, SHA-256 `af916eba…`).
+Submission = `v14`: classifier `models/v14.joblib` + detector `models/v14_turnover.joblib` + GRU `models/v14_gru.joblib` (`v11.py --version v14`, `v11_train.py --version v14`): the `v13r` pipeline (v11's classifier and detector + the GRU) trained on bench 2 **and** on BAR-ATH-like ball gaps (§4). Earlier submissions on the same day: `v11` (`--version v11`, SHA-256 `af916eba…`) and `v13r` (`--version v13r`, SHA-256 `da9ff329…`).
 
 ## 3. Assets used and dropped
 
@@ -64,6 +65,14 @@ Submission = `v13r`: classifier `models/v13r.joblib` + detector `models/v13r_tur
   alive". We replace each dead segment by a roll → carry to the restart point → placed sequence
   (15 % left frozen). This is a property of the *data source*, measured on the ATD as a whole, not
   a rule fitted to frames.
+* **BAR-ATH-like ball gaps** ("bench 3", submission `v14`). Measured on the BAR-ATH ATD from the
+  tracking inputs only (`atd_gap_stats.py`, no label): 59 % of graded frames see the ball, no gap
+  is shorter than 1 s, 85 % of missing frames sit in gaps > 10 s and 44 % in gaps > 30 s, and
+  players move at 58 % of their visible-ball speed inside long gaps. The bench-2 mask had short
+  gaps only (median 2 s). The `atd_stop` world (`idsse_bench.set_world`) draws lognormal blocks
+  (median 11.2 s, sigma 0.91, which reproduces the three gap statistics) and loses the ball through
+  80 % of stoppages until the restart (which reproduces the speed ratio: 0.65). `v14` is trained on
+  every IDSSE match degraded **twice**, in bench 2 and in `atd_stop` (14 training halves-pairs).
 
 ## 5. Possession rules implemented
 
@@ -132,15 +141,38 @@ above (leave-one-match-out, mean spellF1 **and** at least 5 of 7 matches, fixed 
 | v11 | first submission | 0.631 (raw DFL truth: 0.486) | |
 | v11 + gap evidence | label-free EM of the dead-ball rate per ball-gap length on the test game, added to the D emission (`gap_evidence.py`, `validate_gap.py`) | −0.0005 (1/7); −0.0006 to −0.0022 in test worlds whose ball gaps copy BAR-ATH's (`atd_gap_stats.py`) | rejected: the EM estimates are accurate, but the classifier already uses the information through the event-timing features |
 | v12 | training labels aligned to control as well (`validate_relabel.py`) | 0.634 (+0.004, 5/7; raw truth −0.012) | passes narrowly; superseded by v13r |
-| **v13r** | + temporal GRU head over the same features, 50/50 with the classifier (`seq_model.py`, `validate_seq.py`) | **0.650** (+0.020, **7/7**; macroF1 +0.007; raw DFL truth 0.496, +0.010, 6/7) | **kept → submission** |
+| **v13r** | + temporal GRU head over the same features, 50/50 with the classifier (`seq_model.py`, `validate_seq.py`) | **0.650** (+0.020, **7/7**; macroF1 +0.007; raw DFL truth 0.496, +0.010, 6/7) | **kept** |
+| v13 | v12's control-aligned labels + the same GRU head (`validate_seq.py --labels ctrl2`) | 0.649 (vs v13r −0.001, 5/7; raw truth −0.015, 0/7) | rejected: v13r kept |
 
 The GRU alone scored +0.022 (7/7); the 50/50 average was the variant fixed before running, so it is
-the one submitted. v13r passes under both definitions of possession.
+the one kept. v13r passes under both definitions of possession. Unlike our v10 Transformer (raw
+players, ~95 k parameters to learn the geometry itself), this head reads features the classifier
+already uses and only adds temporal context.
 
-On BAR-ATH, v13r changes 5.6 % of graded frames, predicts 236 possessions (3.8 per live minute,
-v11: 283, 4.65; public truth 4.2) and 41.5 % dead ball. Public 5-minute window (diagnostic only,
-never used for any decision): spellF1 0.560 (unchanged; 17 possessions), macroF1 0.807 → 0.840. Unlike our v10 Transformer (raw players, ~95 k parameters to learn the geometry
-itself), this head reads features the classifier already uses and only adds temporal context.
+**`v14`: training on BAR-ATH-like ball gaps** (`validate_world_train.py`). Every model so far was
+trained on bench 2, whose ball gaps are short; BAR-ATH loses the ball in long blocks that go with
+stoppages (§4). Protocol fixed before running: per fold, v13r (trained on bench 2) and v14 (the same
+pipeline trained on the 6 other matches in bench 2 **and** in `atd_stop`) are both scored on the
+held-out match degraded in `atd_stop`, the world whose label-free statistics match BAR-ATH; adopt
+v14 if it beats v13r there on mean spellF1 and on at least 5 of 7 matches.
+
+| held-out match degraded in | v13r | **v14** | verdict |
+|---|---|---|---|
+| `atd_stop` (BAR-ATH-like), control truth | 0.618 | **0.656** (+0.038, **7/7**; macroF1 +0.025; dead-frame recall 90.7 → 96.4 %) | |
+| `atd_stop`, raw DFL truth | 0.476 | **0.512** (+0.036, **7/7**) | |
+| bench 2 (short gaps), control truth | 0.650 | 0.648 (−0.002, 3/7) | |
+| | | | **kept → submission** |
+
+v14 does not lose on short-gap tracking and gains clearly where the ball is lost the way BAR-ATH
+loses it; BAR-ATH has no gap shorter than 1 s, so only the first two rows describe it.
+
+On BAR-ATH (no label involved), v14 predicts 252 possessions, 4.2 per live minute (v11 4.65, v13r
+3.8; the public truth has 4.2), and 43.4 % dead ball; it changes 6.1 % of graded frames against
+v13r. Public 5-minute window (diagnostic only, never used for a decision): spellF1 0.560 (v11,
+v13r) → 0.588, 15 possessions predicted for 17 (v11, v13r: 13); macroF1 0.810 (v13r 0.840) and
+dead-frame recall 57 % (v13r 70 %). That window is the easy part of the match for the ball tracker
+(ball visible on 88 % of its frames, 59 % over the match), i.e. the short-gap case where v14 and
+v13r are equivalent on the bench.
 
 Experiment logs: `ours/bench_results*.csv`.
 
@@ -162,9 +194,9 @@ python3.12 -m venv .venv && .venv/bin/pip install -r ours/requirements.txt
 MTAH_DATA_DIR=/path/to/data .venv/bin/python ours/reproduce.py --name Ousyas
 ```
 
-`reproduce.py` (default `--version v13r`) trains the classifier, the detector and the GRU
-(`v11_train.py`) on the 7 IDSSE matches, writes `evaluation/results/Ousyas.csv`, runs
-`evaluation/validate_submission.py` and prints the SHA-256. Runtime ≈ 15 min on an 8-core CPU, no
+`reproduce.py` (default `--version v14`) trains the classifier, the detector and the GRU
+(`v11_train.py`) on the 7 IDSSE matches, each degraded twice (§4), writes `evaluation/results/Ousyas.csv`, runs
+`evaluation/validate_submission.py` and prints the SHA-256. Runtime ≈ 40 min on an 8-core CPU, no
 GPU. The validation experiments of §6 are the `ours/validate_*.py` scripts.
 
 **Exact reproduction: `--skip-train`** reuses the committed models in `ours/models/` and rebuilds
@@ -173,8 +205,8 @@ line endings, and the decoder is insensitive to last-bit floating-point differen
 that perturbing the model outputs by 1e-6 changes no label). The boosted trees retrain
 identically across machines (our leave-one-match-out scores of §6 reproduce to six decimals on
 Windows and macOS); the GRU is trained seeded and single-threaded, but another CPU may differ in the last
-bits of its weights, which is why the weights are committed. `--version v11` rebuilds our first
-submission (`af916eba…`).
+bits of its weights, which is why the weights are committed. `--version v11` and `--version v13r`
+rebuild our earlier submissions of the day (`af916eba…`, `da9ff329…`).
 
 ## 8. Limitations and what we would do next
 
@@ -190,6 +222,6 @@ submission (`af916eba…`).
 * **Sequence models.** A Transformer over raw players (v10) underperformed with only 6 training
   matches; a GRU over our own features (v13r) helped. Both would gain from more external matches
   (Metrica sample games, PFF World Cup 2022, SkillCorner open data).
-* **Ball gaps.** On BAR-ATH the ball is lost in long blocks (85 % of missing frames in gaps > 10 s)
-  that go with stoppages; our bench now has gap worlds that copy this (`idsse_bench.set_world`),
-  but the models are still trained in the legacy world.
+* **Ball gaps.** v14 trains on a simulation of BAR-ATH's ball loss built from label-free
+  statistics of the match (gap lengths, players' speed in long gaps). The simulation is a model of
+  the tracker, not the tracker: its gain on the real match is probably smaller than on the bench.

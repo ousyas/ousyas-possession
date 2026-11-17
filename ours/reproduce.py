@@ -4,11 +4,11 @@
     py ours/reproduce.py --skip-train     # reutilise ours/models/*.joblib
     py ours/reproduce.py --name equipe    # -> evaluation/results/equipe.csv
 
-Steps (default --version v13r = the submission):
-  1. ours/v11_train.py --version v13r   frame classifier P(H/A/D) + H<->A turnover detector +
-                         temporal GRU head, 7 IDSSE matches
-                         -> models/v13r.joblib, models/v13r_turnover.joblib, models/v13r_gru.joblib
-  2. ours/v11.py --version v13r         applied to the challenge match -> evaluation/results/<name>.csv
+Steps (default --version v14 = the submission):
+  1. ours/v11_train.py --version v14    frame classifier P(H/A/D) + H<->A turnover detector +
+                         temporal GRU head, 7 IDSSE matches degraded twice (bench 2 + atd_stop)
+                         -> models/v14.joblib, models/v14_turnover.joblib, models/v14_gru.joblib
+  2. ours/v11.py --version v14          applied to the challenge match -> evaluation/results/<name>.csv
   3. evaluation/validate_submission.py  same checks as the official scorer
 Everything is seeded (random_state, bench degradation, torch seed, single-threaded deterministic
 torch). --skip-train reuses the committed models and rebuilds the submitted file byte for byte on
@@ -36,8 +36,8 @@ def main():
     ap.add_argument("--name", default="Ousyas")
     ap.add_argument("--gap-evidence", action="store_true",
                     help="label-free ball-gap evidence on D (ours/GAP_EVIDENCE.md); off = submitted file")
-    ap.add_argument("--version", default="v13r", choices=["v11", "v12", "v13", "v13r"],
-                    help="v13r = submission (v11 + GRU head); v11 = first submission; v12/v13 experiments")
+    ap.add_argument("--version", default="v14", choices=["v11", "v12", "v13", "v13r", "v14"],
+                    help="v14 = submission (v13r trained on BAR-ATH-like gaps too); v11, v13r = earlier submissions")
     a = ap.parse_args()
     if not a.skip_train:
         run(["ours/v11_train.py", "--version", a.version])
