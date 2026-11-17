@@ -32,19 +32,29 @@ TURN_MODEL_PATH = os.path.join(HERE, "models", "v11_turnover.joblib")
 # v14 = v13r trained on each IDSSE match degraded twice: the legacy bench AND the atd_stop world,
 # whose ball gaps copy BAR-ATH's (long blocks, lost through stoppages; validate_world_train.py).
 # v15 = v14 with the GRU head averaged over 3 training seeds (validate_gru_seeds.py).
-CONTROL_TAU = {"v11": 0.0, "v12": 2.0, "v13": 2.0, "v13r": 0.0, "v14": 0.0, "v15": 0.0}
-GRU_VERSIONS = {"v13", "v13r", "v14", "v15"}
-GRU_SEEDS = {"v15": (0, 1, 2)}                                # default: (0,)
-TRAIN_WORLDS = {"v14": ("legacy", "atd_stop"), "v15": ("legacy", "atd_stop")}   # default: ("legacy",)
+# v18 = v15 trained on Metrica's sample games 1-2 as well (metrica_bench.py, validate_metrica.py).
+CONTROL_TAU = {"v11": 0.0, "v12": 2.0, "v13": 2.0, "v13r": 0.0, "v14": 0.0, "v15": 0.0, "v18": 0.0}
+GRU_VERSIONS = {"v13", "v13r", "v14", "v15", "v18"}
+GRU_SEEDS = {"v15": (0, 1, 2), "v18": (0, 1, 2)}              # default: (0,)
+TRAIN_WORLDS = {"v14": ("legacy", "atd_stop"), "v15": ("legacy", "atd_stop"),
+                "v18": ("legacy", "atd_stop")}                 # default: ("legacy",)
+EXTRA_MATCHES = {"v18": ("MET1", "MET2")}                      # Metrica sample games
+TREES_FROM = {"v18": "v15"}     # v18 keeps v15's boosted trees + detector; only its GRUs see Metrica
+# v16 = v15's models + broadcast replays as label-free evidence on D at prediction time
+# (broadcast_evidence.py); no new model, so v16 reads and trains v15's files.
+ALIAS = {"v16": "v15", "v17": "v15", "v19": "v15"}       # v17 = v15's models + a decoder recalibrated for them
 WORLD_CFG = {"legacy": dict(world="legacy"), "atd_stop": dict(world="blocks", affinity=1.0, align=0.8)}
 
 
 def model_paths(version="v11"):
+    version = ALIAS.get(version, version)
+    version = TREES_FROM.get(version, version)
     return (os.path.join(HERE, "models", version + ".joblib"),
             os.path.join(HERE, "models", version + "_turnover.joblib"))
 
 
 def gru_path(version, seed=0):
+    version = ALIAS.get(version, version)
     return os.path.join(HERE, "models", version + ("_gru.joblib" if seed == 0 else "_gru_s%d.joblib" % seed))
 
 
@@ -53,17 +63,20 @@ def main():
     import joblib
     import v5
     ap = argparse.ArgumentParser()
-    ap.add_argument("--version", default="v11", choices=sorted(CONTROL_TAU))
+    ap.add_argument("--version", default="v11", choices=sorted(set(CONTROL_TAU) | set(ALIAS)))
     ap.add_argument("--only-gru-seed", type=int, default=None,
                     help="train only this GRU seed (lets the seeds of v15 train in parallel processes)")
     args = ap.parse_args()
-    version = args.version
+    version = ALIAS.get(args.version, args.version)
     tau = CONTROL_TAU[version]
     MODEL_PATH, TURN_MODEL_PATH = model_paths(version)
     import idsse_bench as bench
     datas = []
+    if version in EXTRA_MATCHES:
+        import metrica_bench  # noqa: F401  (registers MET1 / MET2 in idsse_bench)
+    matches = list(T.MATCHES) + list(EXTRA_MATCHES.get(version, ()))
     for world, i, mid in [(w, i, m) for w in TRAIN_WORLDS.get(version, ("legacy",))
-                          for i, m in enumerate(T.MATCHES)]:
+                          for i, m in enumerate(matches)]:
         t0 = time.time()
         bench.set_world(**WORLD_CFG[world])
         try:
@@ -89,7 +102,7 @@ def main():
     idx = list(range(len(datas)))
     d_tr = np.mean(np.concatenate([d["y"][d["graded"] & (d["y"] >= 0)] == 2 for d in datas]))
     os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
-    if args.only_gru_seed is None:
+    if args.only_gru_seed is None and version not in TREES_FROM:
         joblib.dump({"model": train_main(datas, idx, True), "names": datas[0]["names"], "enames": en,
                      "prior": np.array([(1 - d_tr) / 2, (1 - d_tr) / 2, d_tr])}, MODEL_PATH)
         joblib.dump({"model": train_turnover(datas, idx), "names": datas[0]["names"], "snames": sn,
