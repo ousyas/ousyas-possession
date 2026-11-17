@@ -25,15 +25,42 @@ from validate_v11 import train_main  # noqa: E402
 
 MODEL_PATH = os.path.join(HERE, "models", "v11.joblib")
 TURN_MODEL_PATH = os.path.join(HERE, "models", "v11_turnover.joblib")
+# v12 = the v11 pipeline trained on IDSSE labels aligned to the challenge's CONTROL definition
+# (idsse_bench.align_to_control, tau 2 s; validate_relabel.py). Same features, models, decoder.
+# v13 / v13r = v12 / v11 + a temporal GRU head over the same features (seq_model.py, validate_seq.py),
+# its probabilities averaged 50/50 with the boosted trees'. Same decoder.
+CONTROL_TAU = {"v11": 0.0, "v12": 2.0, "v13": 2.0, "v13r": 0.0}
+GRU_VERSIONS = {"v13", "v13r"}
+
+
+def model_paths(version="v11"):
+    return (os.path.join(HERE, "models", version + ".joblib"),
+            os.path.join(HERE, "models", version + "_turnover.joblib"))
+
+
+def gru_path(version):
+    return os.path.join(HERE, "models", version + "_gru.joblib")
 
 
 def main():
+    import argparse
     import joblib
     import v5
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--version", default="v11", choices=sorted(CONTROL_TAU))
+    version = ap.parse_args().version
+    tau = CONTROL_TAU[version]
+    MODEL_PATH, TURN_MODEL_PATH = model_paths(version)
     datas = []
     for i, mid in enumerate(T.MATCHES):
         t0 = time.time()
         d = T.prepare(mid, i)
+        if tau:                                   # v12: touch-spells without control -> previous team
+            import idsse_bench as bench
+            d["gt"] = bench.align_to_control(d["gt"], tau)
+            d["y"] = np.full(len(d["gt"]), -1)
+            for k, c in enumerate("HAD"):
+                d["y"][d["gt"] == c] = k
         teams, px, py, ps, bx, by, bs = d["tracking"]
         S, sn = shape.shape_features(px, py, teams, bx, by, d["blocks"])
         d["E"], en = events.event_features(px, py, ps, bx, by)
@@ -50,6 +77,13 @@ def main():
                  "prior": np.array([(1 - d_tr) / 2, (1 - d_tr) / 2, d_tr])}, MODEL_PATH)
     joblib.dump({"model": train_turnover(datas, idx), "names": datas[0]["names"], "snames": sn,
                  "enames": en}, TURN_MODEL_PATH)
+    if version in GRU_VERSIONS:
+        import seq_model
+        for d in datas:
+            d["F"] = np.hstack([d["X"], d["E"]])
+            d["Fs"] = np.hstack([v5.swap_features(d["X"], d["names"]), d["E"]])
+        joblib.dump(seq_model.train(datas, idx), gru_path(version))
+        print("GRU -> %s" % os.path.relpath(gru_path(version), os.path.dirname(HERE)))
     print("modeles -> %s, %s" % (os.path.relpath(MODEL_PATH, os.path.dirname(HERE)),
                                  os.path.relpath(TURN_MODEL_PATH, os.path.dirname(HERE))))
 

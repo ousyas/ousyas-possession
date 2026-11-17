@@ -10,6 +10,5 @@ joblib==1.5.3
 # figshare ; les caches de ce projet ont ete produits avec cette version.
 kloppy==3.18.0
 
-# Optionnel : uniquement pour l'experience Transformer (ours/tf_model.py, ours/validate_v10.py),
-# rejetee, absente de la soumission.
-# torch==2.12.0
+# Submission v13r: temporal GRU head (ours/seq_model.py), CPU only.
+torch==2.5.1

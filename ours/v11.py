@@ -19,18 +19,22 @@ import v5  # noqa: E402
 import v8  # noqa: E402
 import shape  # noqa: E402
 import events  # noqa: E402
-from v11_train import MODEL_PATH, TURN_MODEL_PATH  # noqa: E402
+from v11_train import model_paths, gru_path, GRU_VERSIONS  # noqa: E402
 
 
 def main():
     import joblib
     ap = argparse.ArgumentParser()
     ap.add_argument("--name", default="v11")
+    ap.add_argument("--version", default="v11", help="v11 (submitted) or v12 (control-aligned labels)")
+    ap.add_argument("--gap-evidence", action="store_true",
+                    help="label-free ball-gap evidence on D (ours/gap_evidence.py). Off = the submitted file")
     args = ap.parse_args()
-    for p in (MODEL_PATH, TURN_MODEL_PATH):
+    model_path, turn_path = model_paths(args.version)
+    for p in (model_path, turn_path):
         if not os.path.exists(p):
-            sys.exit("Modele absent : lance d'abord  python ours/v11_train.py")
-    main_b, turn_b = joblib.load(MODEL_PATH), joblib.load(TURN_MODEL_PATH)
+            sys.exit("Modele absent : lance d'abord  python ours/v11_train.py --version %s" % args.version)
+    main_b, turn_b = joblib.load(model_path), joblib.load(turn_path)
     X, names, extras = v5.build_features()
     assert names == main_b["names"] == turn_b["names"], "features differentes de l'entrainement"
     teams, px, py, ps, bx, by, bs = v3.load_tracking()
@@ -39,11 +43,20 @@ def main():
     E, en = events.event_features(px, py, ps, bx, by)
     assert sn == turn_b["snames"] and en == main_b["enames"] == turn_b["enames"]
     P = main_b["model"].predict_proba(np.hstack([X, E]))
+    if args.version in GRU_VERSIONS:            # v13: + temporal GRU head, 50/50 (validate_seq.py)
+        import seq_model
+        P = 0.5 * P + 0.5 * seq_model.predict(joblib.load(gru_path(args.version)), np.hstack([X, E]), blocks)
     p_turn = turn_b["model"].predict_proba(np.hstack([v8.turnover_features(X, names, S, sn), E]))[:, 1]
     graded = np.zeros(len(P), bool)
     for _, a, b in blocks:
         graded[a:b + 1] = True
     alive = v8.em_alive(P, graded, main_b["prior"])
+    if args.gap_evidence:                      # the global alive rate above stays the target
+        import gap_evidence as G
+        lr, info = G.gap_log_ratio(P, bx, graded, main_b["prior"])
+        P = G.apply_log_ratio(P, lr)
+        rates = {c: round(v[1], 3) for c, v in info.items() if c != "global"}
+        print("gap evidence (EM dead rate per gap class, global %.3f): %s" % (info["global"], rates))
     labels = v8.decode_probs(P, extras, v8.switch_cost(p_turn), alive)
     out = args.name if os.path.isabs(args.name) else os.path.join(v1.RESULTS, args.name + ".csv")
     v1.write(out, labels)

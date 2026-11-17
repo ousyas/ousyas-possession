@@ -1,13 +1,15 @@
 # Ball possession from automatic tracking — technical document
 
-Team **Ousyas** — More than a Hack 2027, Phase 1 (BAR–ATH). Submitted file SHA-256 `af916ebaf5389ebf0557f321a08a82f22566e66e9312038e4e4331813fe462e0`. Code: `ours/`. Reproduction: §7.
+Team **Ousyas** — More than a Hack 2027, Phase 1 (BAR–ATH). Submitted file (`v13r`) SHA-256 `da9ff3292002ec089d80378e4f3eff7303ccd52a2d7d79448826b2a31fc46165`. Code: `ours/`. Reproduction: §7.
 
 ## 1. Approach in one paragraph
 
 Per-frame evidence → a learned frame classifier P(H, A, D) → a learned **turnover detector** →
 an HMM/Viterbi decoder whose transition costs vary in time → minimum-duration clean-up. The
 classifier and the detector are gradient-boosted trees (scikit-learn
-`HistGradientBoostingClassifier`) trained **only on 7 public Bundesliga matches (IDSSE, CC-BY)**
+`HistGradientBoostingClassifier`); the classifier's probabilities are averaged 50/50 with those of
+a small **bidirectional GRU** that reads the same per-frame features over ~100 s of context
+(submission `v13r`). Everything is trained **only on 7 public Bundesliga matches (IDSSE, CC-BY)**
 whose tracking we degrade to look like the challenge's automatic tracking data (ATD). Every
 design decision was taken on that external benchmark with leave-one-match-out validation; the
 public 5-minute window of the challenge game was used only to check that the pipeline runs end to
@@ -32,9 +34,10 @@ plausible events.
 | turnover detector | `v8.py`, `v8_train.py`, `shape.py` | binary HGB: "a direct H↔A change happens within ±0.5 s"; features = frame features + team shape (width, length, players beyond the last defender, in attack direction) + future-minus-past trends over 2 s / 4 s. AUC 0.89–0.92 on held-out IDSSE matches |
 | decoding | `v8.py` (`viterbi_switch`) | 3-state Viterbi (H, A, D). Entering D is cheap only near a stoppage-start event, leaving it only near a restart event (v3). The H↔A switch cost goes from 30 down to 8 at local maxima of the turnover probability. The D bias is bisected so that the decoded alive fraction matches the EM estimate |
 | event timing | `events.py` | 18 features, all team-symmetric: seconds since / until the ball was last / next out of the pitch, still (< 0.6 m/s), controlled (player < 1.5 m, ball < 12 m/s), visible, and since / until a collective burst (≥ 3 players > 4 m/s); ball speed 1 s / 2 s before and after; mean player speed over 6 s and its ±2 s change (capped at 30 s). Added to **both** the frame classifier and the turnover detector |
+| temporal head | `seq_model.py` | 2-layer bidirectional GRU (hidden 64, ~110 k parameters) over the same 61 per-frame features (43 frame + 18 event timing), robust-scaled, at 5 fps; trained on 512-step chunks (~100 s), one random 5 fps phase per half and epoch, H↔A swap augmentation, 10 epochs, Adam 2e-3, seed 0, single-threaded deterministic torch. At prediction, the five 5 fps phases are run over each half and interleaved. Its P(H, A, D) is averaged 50/50 with the classifier's (weight fixed in advance) before the alive-rate EM and the decoder |
 | clean-up | `v3.py` | minimum durations; outside the two graded halves → `X` |
 
-Submission = `v11`: classifier `models/v11.joblib` + detector `models/v11_turnover.joblib` (`v11.py`, `v11_train.py`).
+Submission = `v13r`: classifier `models/v13r.joblib` + detector `models/v13r_turnover.joblib` + GRU `models/v13r_gru.joblib` (`v11.py --version v13r`, `v11_train.py --version v13r`). The classifier and detector are the v11 ones (same labels, same training); `v13r` adds only the GRU. Our first submission was `v11` (`models/v11*.joblib`, `--version v11`, SHA-256 `af916eba…`).
 
 ## 3. Assets used and dropped
 
@@ -111,6 +114,34 @@ v8 scored spellF1 0.555, macroF1 0.793, recall of dead frames 52 %; v11 (submitt
 on spellF1 there (0.593) and we still submit the bench-2 model, because the decision belongs to
 the external benchmark.
 
+### 6.1 Second submission (17 November): `v13r`
+
+**Scoring under the challenge's definition.** DFL's `ball_owning_team` flips on every touch
+(8.4 possession changes per live minute, 7.3 s mean possession), while the challenge only counts a
+change when the new team gains *control* ("a simple touch of the ball without control" and "a
+deflection" do not count, CHALLENGE.md; 4.2 per live minute, 14.2 s on the public window). For the
+experiments below, each held-out IDSSE match is therefore also scored against its labels aligned
+to control (`idsse_bench.align_to_control`): a team spell shorter than 2 s ("keeps the ball for a
+few seconds") that ends with the previous team on the ball again, or with a stoppage, goes back to
+the previous team. This brings IDSSE to 5.5 changes per live minute and 11.0 s possessions. The
+2 s threshold comes from the rule text, not from the public window. Same protocol and criterion as
+above (leave-one-match-out, mean spellF1 **and** at least 5 of 7 matches, fixed before running):
+
+| version | change | spellF1 (control truth) | verdict |
+|---|---|---|---|
+| v11 | first submission | 0.631 (raw DFL truth: 0.486) | |
+| v11 + gap evidence | label-free EM of the dead-ball rate per ball-gap length on the test game, added to the D emission (`gap_evidence.py`, `validate_gap.py`) | −0.0005 (1/7); −0.0006 to −0.0022 in test worlds whose ball gaps copy BAR-ATH's (`atd_gap_stats.py`) | rejected: the EM estimates are accurate, but the classifier already uses the information through the event-timing features |
+| v12 | training labels aligned to control as well (`validate_relabel.py`) | 0.634 (+0.004, 5/7; raw truth −0.012) | passes narrowly; superseded by v13r |
+| **v13r** | + temporal GRU head over the same features, 50/50 with the classifier (`seq_model.py`, `validate_seq.py`) | **0.650** (+0.020, **7/7**; macroF1 +0.007; raw DFL truth 0.496, +0.010, 6/7) | **kept → submission** |
+
+The GRU alone scored +0.022 (7/7); the 50/50 average was the variant fixed before running, so it is
+the one submitted. v13r passes under both definitions of possession.
+
+On BAR-ATH, v13r changes 5.6 % of graded frames, predicts 236 possessions (3.8 per live minute,
+v11: 283, 4.65; public truth 4.2) and 41.5 % dead ball. Public 5-minute window (diagnostic only,
+never used for any decision): spellF1 0.560 (unchanged; 17 possessions), macroF1 0.807 → 0.840. Unlike our v10 Transformer (raw players, ~95 k parameters to learn the geometry
+itself), this head reads features the classifier already uses and only adds temporal context.
+
 Experiment logs: `ours/bench_results*.csv`.
 
 ## 7. Reproduction
@@ -131,14 +162,19 @@ python3.12 -m venv .venv && .venv/bin/pip install -r ours/requirements.txt
 MTAH_DATA_DIR=/path/to/data .venv/bin/python ours/reproduce.py --name Ousyas
 ```
 
-`reproduce.py` trains the classifier and the detector (`v11_train.py`) on the 7 IDSSE matches, writes
-`evaluation/results/Ousyas.csv`, runs `evaluation/validate_submission.py` and prints the SHA-256.
-All randomness is seeded; on Python 3.12 / scikit-learn 1.7.2 the file is byte-identical to the
-submitted one. Runtime ≈ 5 min on a 12-core CPU, no GPU. The validation experiments of §6 are
-the `ours/validate_*.py` scripts. `--skip-train` reuses the committed models in `ours/models/` and
-rebuilds the file in under a minute. The CSV is always written with CRLF line endings, so its
-SHA-256 does not depend on the operating system: with `--skip-train`, Windows 11 and macOS both
-give the submitted file.
+`reproduce.py` (default `--version v13r`) trains the classifier, the detector and the GRU
+(`v11_train.py`) on the 7 IDSSE matches, writes `evaluation/results/Ousyas.csv`, runs
+`evaluation/validate_submission.py` and prints the SHA-256. Runtime ≈ 15 min on an 8-core CPU, no
+GPU. The validation experiments of §6 are the `ours/validate_*.py` scripts.
+
+**Exact reproduction: `--skip-train`** reuses the committed models in `ours/models/` and rebuilds
+the submitted file in about a minute, byte for byte, on any OS: the CSV is always written with CRLF
+line endings, and the decoder is insensitive to last-bit floating-point differences (we checked
+that perturbing the model outputs by 1e-6 changes no label). The boosted trees retrain
+identically across machines (our leave-one-match-out scores of §6 reproduce to six decimals on
+Windows and macOS); the GRU is trained seeded and single-threaded, but another CPU may differ in the last
+bits of its weights, which is why the weights are committed. `--version v11` rebuilds our first
+submission (`af916eba…`).
 
 ## 8. Limitations and what we would do next
 
@@ -151,5 +187,9 @@ give the submitted file.
 * **Smart Tagging** is absent from IDSSE, so the model never saw it during training; its effect
   at test time is untested.
 * **Ball track loss in crowded play** makes team changes in duels late by 1–2 s.
-* **Deep sequence models** (our Transformer) underperformed with only 6 training matches;
-  they would need more external matches or self-supervised pre-training on unlabelled tracking.
+* **Sequence models.** A Transformer over raw players (v10) underperformed with only 6 training
+  matches; a GRU over our own features (v13r) helped. Both would gain from more external matches
+  (Metrica sample games, PFF World Cup 2022, SkillCorner open data).
+* **Ball gaps.** On BAR-ATH the ball is lost in long blocks (85 % of missing frames in gaps > 10 s)
+  that go with stoppages; our bench now has gap worlds that copy this (`idsse_bench.set_world`),
+  but the models are still trained in the legacy world.

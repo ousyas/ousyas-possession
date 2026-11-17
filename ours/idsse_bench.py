@@ -38,7 +38,7 @@ sys.path.insert(0, os.path.join(ROOT, "starter"))
 import possession_metrics as pm  # noqa: E402
 from games import DATA_DIR  # noqa: E402
 
-MATCHES = ["J03WMX", "J03WN1", "J03WOH", "J03WOY", "J03WPF", "J03WPY", "J03WQF"]
+MATCHES = ["J03WMX", "J03WN1", "J03WOH", "J03WOY", "J03WPY", "J03WQQ", "J03WR9"]
 EXT = os.path.join(DATA_DIR, "ext")
 LOG = os.path.join(HERE, "bench_results2.csv")
 FPS = 25
@@ -59,6 +59,36 @@ LEN_M, WID_M = 105.0, 68.0
 DEAD_SIM = True
 DEAD_KEEP_FROZEN = 0.15         # part des arrets laisses tels quels (ballon fige / hors terrain)
 DEAD_MIN_FRAMES = FPS           # arrets plus courts : inchanges
+
+# Ball-gap "world" (bench 3). "legacy" = the original mask above: short gaps (mean 1.2 s), more
+# frequent in crowded live play. "blocks" = short occlusions PLUS long blocks where the tracker
+# loses the ball for many seconds (ball out of shot, held, replay-like gaps), which is what other
+# teams measured on the challenge ATD. DEAD_AFFINITY = how many times more likely a long block is
+# to START during a stoppage (1 = independent of the label). The true value for BAR-ATH is
+# unknown and tracker-specific: the decoder estimates it label-free (ours/gap_evidence.py), and
+# ours/atd_gap_stats.py measures the gap structure of the real ATD to set LONG_GAP_*.
+BALL_GAP_WORLD = "legacy"
+# Measured on the BAR-ATH tactical ATD with atd_gap_stats.py (inputs only, no labels): 59 % of
+# graded frames see the ball, no gap is shorter than 1 s, 85 % of missing frames sit in gaps
+# > 10 s and 44 % in gaps > 30 s (frame-weighted median 25.6 s). A lognormal block length with
+# median 11.2 s and sigma 0.91 reproduces those three numbers.
+LONG_GAP_SHARE = 1.0            # share of ball-missing frames that sit in long blocks
+LONG_GAP_MEDIAN_S = 11.2        # long block length ~ lognormal(median, sigma)
+LONG_GAP_SIGMA = 0.91
+DEAD_AFFINITY = 1.0
+# Stoppage-aligned loss: with this probability per stoppage (>= 2 s), the ball is lost somewhere in
+# its first half and found again at the restart (+/- 1 s). Label-free hint on BAR-ATH: players are
+# at 58 % of their visible-ball speed inside long gaps, which start-affinity alone cannot reach.
+DEAD_ALIGN = 0.0
+
+
+def set_world(world="legacy", affinity=1.0, align=0.0, **kw):
+    """Switch the degradation world for the next degrade() calls (module-level, like DEAD_SIM)."""
+    global BALL_GAP_WORLD, DEAD_AFFINITY, DEAD_ALIGN, LONG_GAP_SHARE, LONG_GAP_MEDIAN_S, LONG_GAP_SIGMA
+    BALL_GAP_WORLD, DEAD_AFFINITY, DEAD_ALIGN = world, float(affinity), float(align)
+    LONG_GAP_SHARE = kw.get("long_share", LONG_GAP_SHARE)
+    LONG_GAP_MEDIAN_S = kw.get("long_median_s", LONG_GAP_MEDIAN_S)
+    LONG_GAP_SIGMA = kw.get("long_sigma", LONG_GAP_SIGMA)
 
 
 # ----------------------------------------------------------------------------------------------
@@ -235,15 +265,18 @@ def degrade(m, seed):
     # ballon : trous plus probables dans les zones chargees ; dichotomie pour viser 41 %
     d = np.hypot((px - bx[:, None]) * LEN_M, (py - by[:, None]) * WID_M)
     crowded = np.sum(d < 3.0, axis=1) >= 3
-    weight = np.where(crowded, CROWD_BOOST, 1.0)
-    lo, hi = 1e-4, 0.2
-    for _ in range(12):
-        mid = (lo + hi) / 2
-        miss = markov_gaps(n, np.minimum(1, mid * weight), BALL_GAP_MEAN, np.random.default_rng(seed + 1))
-        if miss.mean() < BALL_MISSING_TARGET:
-            lo = mid
-        else:
-            hi = mid
+    if BALL_GAP_WORLD == "blocks":
+        miss = ball_mask_blocks(m["labels"], crowded, seed)
+    else:
+        weight = np.where(crowded, CROWD_BOOST, 1.0)
+        lo, hi = 1e-4, 0.2
+        for _ in range(12):
+            mid = (lo + hi) / 2
+            miss = markov_gaps(n, np.minimum(1, mid * weight), BALL_GAP_MEAN, np.random.default_rng(seed + 1))
+            if miss.mean() < BALL_MISSING_TARGET:
+                lo = mid
+            else:
+                hi = mid
     bx[miss] = np.nan
     by[miss] = np.nan
 
@@ -252,6 +285,81 @@ def degrade(m, seed):
     bs = np.full(n, np.nan)
     return (m["teams"], px.astype(np.float32), py.astype(np.float32), ps.astype(np.float32),
             bx.astype(np.float32), by.astype(np.float32), bs.astype(np.float32))
+
+
+def long_blocks(p_start, rng, median_frames, sigma):
+    """Like markov_gaps, but block lengths are lognormal (heavy-tailed: some gaps last 30 s+)."""
+    n = len(p_start)
+    miss = np.zeros(n, bool)
+    starts = rng.random(n) < p_start
+    mu = np.log(median_frames)
+    t = 0
+    while t < n:
+        if starts[t]:
+            L = max(1, int(round(rng.lognormal(mu, sigma))))
+            miss[t:t + L] = True
+            t += L
+        else:
+            t += 1
+    return miss
+
+
+def _bisect_rate(make_mask, target, lo, hi, iters=14):
+    for _ in range(iters):
+        mid = (lo + hi) / 2
+        miss = make_mask(mid)
+        lo, hi = (mid, hi) if miss.mean() < target else (lo, mid)
+    return make_mask((lo + hi) / 2)
+
+
+def ball_mask_blocks(labels, crowded, seed):
+    """'blocks' world: short occlusions in crowded play + long blocks, DEAD_AFFINITY x more likely
+    to start in a stoppage. Total missing fraction = BALL_MISSING_TARGET, as in the legacy world."""
+    n = len(labels)
+    w_short = np.where(crowded, CROWD_BOOST, 1.0)
+    short = _bisect_rate(
+        lambda p: markov_gaps(n, np.minimum(1, p * w_short), BALL_GAP_MEAN, np.random.default_rng(seed + 1)),
+        BALL_MISSING_TARGET * (1 - LONG_GAP_SHARE), 1e-5, 0.2)
+    if DEAD_ALIGN > 0:
+        rng = np.random.default_rng(seed + 3)
+        dd = np.diff(np.concatenate(([0], (labels == "D").astype(np.int8), [0])))
+        for s, e in zip(np.flatnonzero(dd == 1), np.flatnonzero(dd == -1)):
+            if e - s >= 2 * FPS and rng.random() < DEAD_ALIGN:
+                a = s + int(rng.integers(0, (e - s) // 2 + 1))
+                short[a:min(n, e + int(rng.integers(-FPS, FPS + 1)))] = True
+    w_long = np.where(labels == "D", DEAD_AFFINITY, 1.0)
+    w_long = w_long / w_long.max()
+    med = LONG_GAP_MEDIAN_S * FPS
+    return _bisect_rate(
+        lambda p: short | long_blocks(np.minimum(1, p * w_long), np.random.default_rng(seed + 2), med,
+                                      LONG_GAP_SIGMA),
+        BALL_MISSING_TARGET, 1e-6, 0.5)
+
+
+CONTROL_TAU_S = 2.0             # challenge rule: "a player keeps the ball for a few seconds"
+
+
+def align_to_control(gt, tau_s=CONTROL_TAU_S):
+    """Turn provider labels (DFL flips the owning team on EVERY touch: 8.4 changes per live minute,
+    7.3 s possessions) into the challenge's definition, where a change of possession needs
+    CONTROL ("a simple touch of the ball without control" and "a deflection" do not count,
+    CHALLENGE.md). A team spell shorter than tau that ends with the previous team on the ball
+    again, or with a stoppage, was a touch without control: it goes back to the previous team.
+    Spells right after a restart are kept (the restart gives a clear possessor). X/D untouched."""
+    lab = np.asarray(gt).copy()
+    tau = int(round(tau_s * FPS))
+    changed = True
+    while changed:
+        changed = False
+        st = np.flatnonzero(np.r_[True, lab[1:] != lab[:-1]])
+        en = np.r_[st[1:], len(lab)]
+        for k in range(1, len(st) - 1):
+            a, b = st[k], en[k]
+            cur, prev, nxt = lab[a], lab[a - 1], lab[b]
+            if cur in "HA" and prev in "HA" and prev != cur and b - a < tau and nxt in (prev, "D"):
+                lab[a:b] = prev
+                changed = True
+    return lab
 
 
 def blocks_from_period(period):
