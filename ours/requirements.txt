@@ -1,0 +1,15 @@
+# Versions exactes avec lesquelles la soumission a ete produite (Python 3.12.10, Windows 11, CPU).
+#   py -3.12 -m pip install -r ours/requirements.txt
+numpy==2.3.5
+pandas==2.3.3
+scipy==1.16.3
+scikit-learn==1.7.2
+joblib==1.5.3
+
+# Seulement pour reconstruire le cache IDSSE (data/ext/idsse_*.npz) depuis les fichiers bruts
+# figshare ; les caches de ce projet ont ete produits avec cette version.
+kloppy==3.18.0
+
+# Optionnel : uniquement pour l'experience Transformer (ours/tf_model.py, ours/validate_v10.py),
+# rejetee, absente de la soumission.
+# torch==2.12.0

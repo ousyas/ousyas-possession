@@ -1,0 +1,13 @@
+date,match,version,alive_em,spellF1,macroF1,alive_dead_f1,team_acc,team_far,note
+2026-11-14 22:32,J03WMX,v8,0.585,0.4361,0.8837,0.979,0.861,0.934,arret apres 4/7 folds: critere deja impossible
+2026-11-14 22:32,J03WMX,v10,0.597,0.3994,0.8795,0.973,0.864,0.941,arret apres 4/7 folds: critere deja impossible
+2026-11-14 22:32,J03WMX,v8+v10,0.591,0.4257,0.8873,0.979,0.865,0.941,arret apres 4/7 folds: critere deja impossible
+2026-11-14 22:32,J03WN1,v8,0.5,0.4100,0.8401,0.957,0.815,0.903,arret apres 4/7 folds: critere deja impossible
+2026-11-14 22:32,J03WN1,v10,0.5,0.3424,0.8186,0.949,0.793,0.878,arret apres 4/7 folds: critere deja impossible
+2026-11-14 22:32,J03WN1,v8+v10,0.5,0.3869,0.8420,0.961,0.814,0.900,arret apres 4/7 folds: critere deja impossible
+2026-11-14 22:32,J03WOH,v8,0.529,0.4713,0.8774,0.974,0.856,0.919,arret apres 4/7 folds: critere deja impossible
+2026-11-14 22:32,J03WOH,v10,0.53,0.4608,0.8714,0.963,0.862,0.929,arret apres 4/7 folds: critere deja impossible
+2026-11-14 22:32,J03WOH,v8+v10,0.529,0.4683,0.8798,0.972,0.862,0.930,arret apres 4/7 folds: critere deja impossible
+2026-11-14 22:32,J03WOY,v8,0.5529999999999999,0.4681,0.8682,0.969,0.847,0.921,arret apres 4/7 folds: critere deja impossible
+2026-11-14 22:32,J03WOY,v10,0.555,0.4364,0.8557,0.958,0.844,0.918,arret apres 4/7 folds: critere deja impossible
+2026-11-14 22:32,J03WOY,v8+v10,0.5539999999999999,0.4509,0.8659,0.968,0.845,0.918,arret apres 4/7 folds: critere deja impossible
