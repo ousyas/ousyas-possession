@@ -124,11 +124,21 @@ py -3.12 -m pip install -r ours/requirements.txt
 py ours/reproduce.py --name Ousyas
 ```
 
+On macOS / Linux (no `py` launcher), with the data bundle anywhere:
+
+```bash
+python3.12 -m venv .venv && .venv/bin/pip install -r ours/requirements.txt
+MTAH_DATA_DIR=/path/to/data .venv/bin/python ours/reproduce.py --name Ousyas
+```
+
 `reproduce.py` trains the classifier and the detector (`v11_train.py`) on the 7 IDSSE matches, writes
 `evaluation/results/Ousyas.csv`, runs `evaluation/validate_submission.py` and prints the SHA-256.
 All randomness is seeded; on Python 3.12 / scikit-learn 1.7.2 the file is byte-identical to the
 submitted one. Runtime ≈ 5 min on a 12-core CPU, no GPU. The validation experiments of §6 are
-the `ours/validate_*.py` scripts.
+the `ours/validate_*.py` scripts. `--skip-train` reuses the committed models in `ours/models/` and
+rebuilds the file in under a minute. The CSV is always written with CRLF line endings, so its
+SHA-256 does not depend on the operating system: with `--skip-train`, Windows 11 and macOS both
+give the submitted file.
 
 ## 8. Limitations and what we would do next
 

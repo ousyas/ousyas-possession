@@ -203,7 +203,8 @@ def build(switch_team, switch_dead):
 
 def write(path, labels):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as f:
+    # Always CRLF, as Windows text mode wrote the submitted file: same bytes (SHA-256) on every OS.
+    with open(path, "w", newline="\r\n") as f:
         f.write("frame,label\n")
         f.writelines("%d,%s\n" % (i, l) for i, l in enumerate(labels))
 
