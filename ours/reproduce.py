@@ -4,11 +4,11 @@
     py ours/reproduce.py --skip-train     # reutilise ours/models/*.joblib
     py ours/reproduce.py --name equipe    # -> evaluation/results/equipe.csv
 
-Steps (default --version v14 = the submission):
-  1. ours/v11_train.py --version v14    frame classifier P(H/A/D) + H<->A turnover detector +
-                         temporal GRU head, 7 IDSSE matches degraded twice (bench 2 + atd_stop)
-                         -> models/v14.joblib, models/v14_turnover.joblib, models/v14_gru.joblib
-  2. ours/v11.py --version v14          applied to the challenge match -> evaluation/results/<name>.csv
+Steps (default --version v15 = the submission):
+  1. ours/v11_train.py --version v15    frame classifier P(H/A/D) + H<->A turnover detector +
+                         3 temporal GRU heads (seeds 0-2), 7 IDSSE matches degraded twice
+                         -> models/v15.joblib, v15_turnover.joblib, v15_gru.joblib, v15_gru_s1/_s2.joblib
+  2. ours/v11.py --version v15          applied to the challenge match -> evaluation/results/<name>.csv
   3. evaluation/validate_submission.py  same checks as the official scorer
 Everything is seeded (random_state, bench degradation, torch seed, single-threaded deterministic
 torch). --skip-train reuses the committed models and rebuilds the submitted file byte for byte on
@@ -36,8 +36,8 @@ def main():
     ap.add_argument("--name", default="Ousyas")
     ap.add_argument("--gap-evidence", action="store_true",
                     help="label-free ball-gap evidence on D (ours/GAP_EVIDENCE.md); off = submitted file")
-    ap.add_argument("--version", default="v14", choices=["v11", "v12", "v13", "v13r", "v14"],
-                    help="v14 = submission (v13r trained on BAR-ATH-like gaps too); v11, v13r = earlier submissions")
+    ap.add_argument("--version", default="v15", choices=["v11", "v12", "v13", "v13r", "v14", "v15"],
+                    help="v15 = submission (v14 + 3 GRU seeds); v11, v13r, v14 = earlier submissions")
     a = ap.parse_args()
     if not a.skip_train:
         run(["ours/v11_train.py", "--version", a.version])

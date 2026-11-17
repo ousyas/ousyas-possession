@@ -19,7 +19,7 @@ import v5  # noqa: E402
 import v8  # noqa: E402
 import shape  # noqa: E402
 import events  # noqa: E402
-from v11_train import model_paths, gru_path, GRU_VERSIONS  # noqa: E402
+from v11_train import model_paths, gru_path, GRU_VERSIONS, GRU_SEEDS  # noqa: E402
 
 
 def main():
@@ -45,7 +45,9 @@ def main():
     P = main_b["model"].predict_proba(np.hstack([X, E]))
     if args.version in GRU_VERSIONS:            # v13: + temporal GRU head, 50/50 (validate_seq.py)
         import seq_model
-        P = 0.5 * P + 0.5 * seq_model.predict(joblib.load(gru_path(args.version)), np.hstack([X, E]), blocks)
+        P_g = np.mean([seq_model.predict(joblib.load(gru_path(args.version, s)), np.hstack([X, E]), blocks)
+                       for s in GRU_SEEDS.get(args.version, (0,))], 0)
+        P = 0.5 * P + 0.5 * P_g
     p_turn = turn_b["model"].predict_proba(np.hstack([v8.turnover_features(X, names, S, sn), E]))[:, 1]
     graded = np.zeros(len(P), bool)
     for _, a, b in blocks:

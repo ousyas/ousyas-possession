@@ -1,6 +1,6 @@
 # Ball possession from automatic tracking — technical document
 
-Team **Ousyas** — More than a Hack 2027, Phase 1 (BAR–ATH). Submitted file (`v14`) SHA-256 `be4c695128e50ad1c65532c5b3faf4ffc03b2962d186a247b7043fb17e8bc792`. Code: `ours/`. Reproduction: §7.
+Team **Ousyas** — More than a Hack 2027, Phase 1 (BAR–ATH). Submitted file (`v15`) SHA-256 `6e44ac14de68bca95d1029a6ac6fedc053234989631a32e5f94f32bfc716ec31`. Code: `ours/`. Reproduction: §7.
 
 ## 1. Approach in one paragraph
 
@@ -9,8 +9,8 @@ an HMM/Viterbi decoder whose transition costs vary in time → minimum-duration 
 classifier and the detector are gradient-boosted trees (scikit-learn
 `HistGradientBoostingClassifier`); the classifier's probabilities are averaged 50/50 with those of
 a small **bidirectional GRU** that reads the same per-frame features over ~100 s of context
-(`v13r`), and the submission `v14` trains all three on the same matches degraded twice: once as
-before and once with ball gaps that copy BAR-ATH's (§4). Everything is trained **only on 7 public Bundesliga matches (IDSSE, CC-BY)**
+(`v13r`); `v14` trains all three on the same matches degraded twice, once as before and once with
+ball gaps that copy BAR-ATH's (§4); the submission `v15` averages the GRU over 3 training seeds. Everything is trained **only on 7 public Bundesliga matches (IDSSE, CC-BY)**
 whose tracking we degrade to look like the challenge's automatic tracking data (ATD). Every
 design decision was taken on that external benchmark with leave-one-match-out validation; the
 public 5-minute window of the challenge game was used only to check that the pipeline runs end to
@@ -35,10 +35,10 @@ plausible events.
 | turnover detector | `v8.py`, `v8_train.py`, `shape.py` | binary HGB: "a direct H↔A change happens within ±0.5 s"; features = frame features + team shape (width, length, players beyond the last defender, in attack direction) + future-minus-past trends over 2 s / 4 s. AUC 0.89–0.92 on held-out IDSSE matches |
 | decoding | `v8.py` (`viterbi_switch`) | 3-state Viterbi (H, A, D). Entering D is cheap only near a stoppage-start event, leaving it only near a restart event (v3). The H↔A switch cost goes from 30 down to 8 at local maxima of the turnover probability. The D bias is bisected so that the decoded alive fraction matches the EM estimate |
 | event timing | `events.py` | 18 features, all team-symmetric: seconds since / until the ball was last / next out of the pitch, still (< 0.6 m/s), controlled (player < 1.5 m, ball < 12 m/s), visible, and since / until a collective burst (≥ 3 players > 4 m/s); ball speed 1 s / 2 s before and after; mean player speed over 6 s and its ±2 s change (capped at 30 s). Added to **both** the frame classifier and the turnover detector |
-| temporal head | `seq_model.py` | 2-layer bidirectional GRU (hidden 64, ~110 k parameters) over the same 61 per-frame features (43 frame + 18 event timing), robust-scaled, at 5 fps; trained on 512-step chunks (~100 s), one random 5 fps phase per half and epoch, H↔A swap augmentation, 10 epochs, Adam 2e-3, seed 0, single-threaded deterministic torch. At prediction, the five 5 fps phases are run over each half and interleaved. Its P(H, A, D) is averaged 50/50 with the classifier's (weight fixed in advance) before the alive-rate EM and the decoder |
+| temporal head | `seq_model.py` | (v15: 3 of them, seeds 0–2, averaged) 2-layer bidirectional GRU (hidden 64, ~110 k parameters) over the same 61 per-frame features (43 frame + 18 event timing), robust-scaled, at 5 fps; trained on 512-step chunks (~100 s), one random 5 fps phase per half and epoch, H↔A swap augmentation, 10 epochs, Adam 2e-3, seed 0, single-threaded deterministic torch. At prediction, the five 5 fps phases are run over each half and interleaved. Its P(H, A, D) is averaged 50/50 with the classifier's (weight fixed in advance) before the alive-rate EM and the decoder |
 | clean-up | `v3.py` | minimum durations; outside the two graded halves → `X` |
 
-Submission = `v14`: classifier `models/v14.joblib` + detector `models/v14_turnover.joblib` + GRU `models/v14_gru.joblib` (`v11.py --version v14`, `v11_train.py --version v14`): the `v13r` pipeline (v11's classifier and detector + the GRU) trained on bench 2 **and** on BAR-ATH-like ball gaps (§4). Earlier submissions on the same day: `v11` (`--version v11`, SHA-256 `af916eba…`) and `v13r` (`--version v13r`, SHA-256 `da9ff329…`).
+Submission = `v15`: classifier `models/v15.joblib` + detector `models/v15_turnover.joblib` + GRUs `models/v15_gru.joblib`, `v15_gru_s1.joblib`, `v15_gru_s2.joblib` (seeds 0, 1, 2; their probabilities are averaged) (`v11.py --version v15`, `v11_train.py --version v15`): the `v13r` pipeline (v11's classifier and detector + the GRU head) trained on bench 2 **and** on BAR-ATH-like ball gaps (§4), i.e. `v14` with 3 GRU seeds. The classifier, the detector and the seed-0 GRU are identical to `v14`'s (deterministic training). Earlier submissions on the same day: `v11` (SHA-256 `af916eba…`), `v13r` (`da9ff329…`), `v14` (`be4c6951…`), each rebuilt by `--version`.
 
 ## 3. Assets used and dropped
 
@@ -166,6 +166,23 @@ v14 if it beats v13r there on mean spellF1 and on at least 5 of 7 matches.
 v14 does not lose on short-gap tracking and gains clearly where the ball is lost the way BAR-ATH
 loses it; BAR-ATH has no gap shorter than 1 s, so only the first two rows describe it.
 
+**`v15`: 3 GRU seeds** (`validate_gru_seeds.py`). The GRU's probabilities are averaged over training
+seeds 0, 1, 2 (variance reduction; trees, decoder and data unchanged). Same protocol, rule fixed
+before running: beat v14 in `atd_stop` on mean spellF1 and on at least 5 of 7 matches. The v14 rows
+of this run reproduce the v14 scores above exactly.
+
+| held-out match degraded in | v14 | **v15** | verdict |
+|---|---|---|---|
+| `atd_stop`, control truth | 0.6557 | **0.6576** (+0.002, **5/7**) | |
+| `atd_stop`, raw DFL truth | 0.5121 | 0.5178 (+0.006, 6/7) | |
+| bench 2, control truth | 0.6478 | 0.6575 (+0.010, 6/7) | |
+| bench 2, raw DFL truth | 0.4923 | 0.5019 (+0.010, 7/7) | |
+| | | | **kept → submission** |
+
+On BAR-ATH (no label involved), v15 predicts 240 possessions (4.0 per live minute) and 43.4 % dead
+ball, and changes 2.4 % of graded frames against v14. Public 5-minute window (diagnostic only,
+never used for a decision): spellF1 0.640 (v14 0.588, v13r and v11 0.560), macroF1 0.822.
+
 On BAR-ATH (no label involved), v14 predicts 252 possessions, 4.2 per live minute (v11 4.65, v13r
 3.8; the public truth has 4.2), and 43.4 % dead ball; it changes 6.1 % of graded frames against
 v13r. Public 5-minute window (diagnostic only, never used for a decision): spellF1 0.560 (v11,
@@ -194,9 +211,9 @@ python3.12 -m venv .venv && .venv/bin/pip install -r ours/requirements.txt
 MTAH_DATA_DIR=/path/to/data .venv/bin/python ours/reproduce.py --name Ousyas
 ```
 
-`reproduce.py` (default `--version v14`) trains the classifier, the detector and the GRU
+`reproduce.py` (default `--version v15`) trains the classifier, the detector and the 3 GRUs
 (`v11_train.py`) on the 7 IDSSE matches, each degraded twice (§4), writes `evaluation/results/Ousyas.csv`, runs
-`evaluation/validate_submission.py` and prints the SHA-256. Runtime ≈ 40 min on an 8-core CPU, no
+`evaluation/validate_submission.py` and prints the SHA-256. Runtime ≈ 60 min on an 8-core CPU, no
 GPU. The validation experiments of §6 are the `ours/validate_*.py` scripts.
 
 **Exact reproduction: `--skip-train`** reuses the committed models in `ours/models/` and rebuilds
@@ -205,8 +222,8 @@ line endings, and the decoder is insensitive to last-bit floating-point differen
 that perturbing the model outputs by 1e-6 changes no label). The boosted trees retrain
 identically across machines (our leave-one-match-out scores of §6 reproduce to six decimals on
 Windows and macOS); the GRU is trained seeded and single-threaded, but another CPU may differ in the last
-bits of its weights, which is why the weights are committed. `--version v11` and `--version v13r`
-rebuild our earlier submissions of the day (`af916eba…`, `da9ff329…`).
+bits of its weights, which is why the weights are committed. `--version v11`, `v13r` and `v14`
+rebuild our earlier submissions of the day (`af916eba…`, `da9ff329…`, `be4c6951…`).
 
 ## 8. Limitations and what we would do next
 
